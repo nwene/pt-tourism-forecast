@@ -32,7 +32,7 @@ This project builds and evaluates forecasting models for monthly tourism in Port
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/<your-username>/portugal-tourism-forecast.git
+   git clone https://github.com/nwene/pt-tourism-forecast.git
    cd portugal-tourism-forecast
 
 2.  Open the R Markdown / notebook file: pt_tourism_forecast.Rmd 
