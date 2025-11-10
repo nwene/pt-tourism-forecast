@@ -1,0 +1,400 @@
+---
+title: "Portugal Tourism Forecast"
+author: 
+  - "- Nwenendah Isaac Dokubo"
+  - "- Idris Elfakie"
+date: "30 Oct 2025"
+output: html_notebook
+link-citations: true
+nocite: '@*'
+references:
+  - id: oecd-guidance-2025
+    type: report
+    title: "Guidance to develop a tourism demand forecasting model for Portugal"
+    author:
+      - literal: OECD
+    issued:
+      date-parts: [[2025, 5, 30]]
+    container-title: "OECD Tourism Papers"
+    collection-number: "2025/10"
+    publisher: "OECD Publishing"
+    publisher-place: "Paris"
+    DOI: "10.1787/8a941e5e-en"
+    URL: "http://dx.doi.org/10.1787/8a941e5e-en"
+  - id: eurostat-pt-nights
+    type: dataset
+    title: "Arrivals at tourist accommodation establishments - monthly data — Portugal"
+    author:
+      - literal: Eurostat
+    issued:
+      date-parts: [[2025]]
+    publisher: "Statistical Office of the European Union"
+    publisher-place: "Luxembourg"
+    URL: "https://ec.europa.eu/eurostat"
+  - id: fpp3-book
+    type: book
+    title: "Forecasting: Principles and Practice (3rd ed.)"
+    author:
+      - family: Hyndman
+        given: Rob J.
+      - family: Athanasopoulos
+        given: George
+    issued:
+      date-parts: [[2021]]
+    publisher: "OTexts"
+    URL: "https://otexts.com/fpp3/"
+  - id: r-core
+    type: software
+    title: "R: A Language and Environment for Statistical Computing"
+    author:
+      - literal: R Core Team
+    issued:
+      date-parts: [[2025]]
+    publisher: "R Foundation for Statistical Computing"
+    publisher-place: "Vienna, Austria"
+    URL: "https://www.r-project.org/"
+  - id: pkg-tsibble
+    type: software
+    title: "tsibble: Tidy Temporal Data Frames and Tools"
+    author:
+      - family: Wang
+        given: Earo
+      - family: Cook
+        given: Dianne
+      - family: Hyndman
+        given: Rob J.
+    issued:
+      date-parts: [[2024]]
+    URL: "https://tsibble.tidyverts.org/"
+  - id: pkg-feasts
+    type: software
+    title: "feasts: Feature Extraction and Statistics for Time Series"
+    author:
+      - family: Hyndman
+        given: Rob J.
+      - family: O'Hara-Wild
+        given: Mitchell
+      - family: Wang
+        given: Earo
+    issued:
+      date-parts: [[2024]]
+    URL: "https://feasts.tidyverts.org/"
+  - id: pkg-urca
+    type: software
+    title: "urca: Unit Root and Cointegration Tests for Time Series Data"
+    author:
+      - family: Pfaff
+        given: Bernhard
+    issued:
+      date-parts: [[2024]]
+    URL: "https://cran.r-project.org/package=urca"
+  - id: pkg-readr
+    type: software
+    title: "readr: Read Rectangular Text Data"
+    author:
+      - family: Wickham
+        given: Hadley
+      - family: Hester
+        given: Jim
+      - family: Bryan
+        given: Jennifer
+    issued:
+      date-parts: [[2024]]
+    URL: "https://readr.tidyverse.org/"
+  - id: pkg-kableextra
+    type: software
+    title: "kableExtra: Construct Complex Table with 'kable' and Pipe Syntax"
+    author:
+      - family: Zhu
+        given: Hao
+    issued:
+      date-parts: [[2024]]
+    URL: "https://haozhu233.github.io/kableExtra/"
+  - id: pkg-prettydoc
+    type: software
+    title: "prettydoc: Creating Pretty Documents from R Markdown"
+    author:
+      - family: Tang
+        given: Yixuan
+    issued:
+      date-parts: [[2024]]
+    URL: "https://cran.r-project.org/package=prettydoc"
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##  Introduction
+
+Tourism is a core driver of Portugal’s economy and a suitable case for monthly time-series forecasting. OECD Tourism Papers 2025/10 reports that travel and tourism contributed ~9.7% of GDP and nearly half of service exports in 2024, with 80.3 million overnight stays. The Eurostat monthly tourism data is official, timely, and long enough to reveal trend and seasonality—ideal for SARIMA-based modeling. Forecasts help public agencies plan transport and public services, and help airlines, hotels, and tour operators manage capacity, staffing, and inventories while avoiding overcrowding and budget waste.
+
+---
+
+### Installation packages and load data
+```{r message = FALSE, warning = FALSE}
+library("fpp3")
+library("kableExtra")
+library("tsibble")
+```
+
+```{r message = FALSE, warning = FALSE}
+library(readr)
+load("PT_Tourism_data.RData") 
+```
+
+### Convert to a time indexed table
+```{r message = FALSE, warning = FALSE}
+pt_tourism_dataset$month <- tsibble::yearmonth(paste0(pt_tourism_dataset$month, "-01"))
+pt_tour_ts <- pt_tourism_dataset |>
+  tsibble::as_tsibble(index = month)
+print(pt_tour_ts)
+
+```
+
+## Identification of the Model
+
+### Visually identify seasonality and trend via plots, ACF, and PACF.  
+```{r message = FALSE, warning = FALSE, out.width="100%"}
+
+pt_tour  <- pt_tour_ts  %>%
+  filter(year(month) < 2020) %>%  
+  mutate(tourist = tourist / 1000) %>%
+  select(month, tourist)
+gg_tsdisplay(pt_tour, tourist, plot_type = 'partial', lag = 36) +
+  labs(title = "Portugal's Tourism Traffic (2008 - 2019)", y = "Number of Tourists (x1000)")
+```
+
+#### Stabilizing the variance using a Box–Cox transformation.
+```{r message = FALSE, warning = FALSE, out.width="100%"}
+library(dplyr)
+library(feasts)
+pt_tour %>% 
+  gg_tsdisplay(log(tourist), plot_type = "partial", lag = 36) + labs(title = "Log Transformed", y = "")
+
+
+```
+
+### Exploratory Analysis:
+
+Visual inspection and the ACF/PACF show clear annual seasonality and a mild trend; variance fluctuations are limited. A Box–Cox check brought no meaningful stabilization benefit, so we kept the original scale and proceed with the next step - Seasonal Difference. But firstly, we also have to test for the presence of a Unit Root. We will be installing a library urca which is used for the Augmented Dickey Fuller Test (ADF) to test for the trend and apply the appropriate difference.
+
+
+
+### Apply unit root test with trend:
+```{r message = FALSE, warning = FALSE}
+library(urca)
+summary(ur.df(pt_tour$tourist, type = "trend", lags = 24))
+```
+
+### Interpreting the result for the ADF test 
+
+We variated between lag values to get the value of the last lag that is below 10% significance. Using the GTS t-dig approach, we started from lag 26 and descended to lag 24 which gave us a phi1 value of 0.000624 , which falls within the acceptable range of values. The results of the ADF test showed the existence of a Unit Root, since '-1.811 ' is not more negative than '−3.43' (5% level), so we fail to reject the Null hypothesis. Thus we need at least one seasonal difference.
+
+### Applying Seasonal differencing then re-checking stationarity.
+```{r message = FALSE, warning = FALSE, out.width="100%"}
+pt_tour %>%
+  gg_tsdisplay(difference(tourist, 12), plot_type = "partial", lag = 36) +
+  labs(title = "Seasonal Difference (12)", y = "")
+``` 
+
+### Seasonal difference results interpretation:
+
+After taking the seasonal difference, the plot was analyzed and it still exhibited patterns of constitutionality and so, further tests will be needed to check for the presence of a unit root.
+
+###  Unit root test with drift after applying: Seasonal Differencing
+```{r message = FALSE, warning = FALSE}
+pt_tour <- pt_tour %>%
+  mutate(d12_tourist = difference(tourist, 12))
+library(urca)
+summary(ur.df(
+  na.omit(pt_tour$d12_tourist),
+  type = c('drift'),
+  lags = 12
+))
+```
+
+### Interpreting the result for the ADF test after seasonal differencing (lag = 12)
+
+After analyzing the output of the ADF test with drift, the value of tau3 τ = −2.2048, which is above the 5% critical value −2.88. therefore we fail to reject the null hypothesis. Then, we proceed to apply a first order difference.
+
+
+### Applying Seasonal Differencing and First order Differencing
+
+```{r message = FALSE, warning = FALSE, out.width="100%"}
+pt_tour %>%
+  gg_tsdisplay(difference(d12_tourist),
+               plot_type = 'partial',
+               lag = 36) +
+  labs(title = "Seasonal + First order Differencing", y = "")
+``` 
+
+### First order difference report
+
+After taking a further first order difference, the plot was analyzed and it exhibits a pattern of stationary. However, the decision is subject to a final ADF test to verify the absence of a unit root.
+
+###  Unit root test after applying: Seasonal Differencing + First Order Differencing
+```{r}
+pt_tour <- pt_tour %>%
+  mutate(dd_tourist = difference(d12_tourist))
+library(urca)
+summary(ur.df(
+  na.omit(pt_tour$dd_tourist),
+  type = c('none'),
+  lags = 11
+))
+  
+```
+### Interpreting the result for the ADF test 
+
+After analyzing the output of the ADF test, the ADF test statistic is τ =  −4.3116 which is less than −1.95,and now we can  reject the null hypothesis at the 5%. We proceed to model identification.
+
+### Identification of the Model through the assessment of the ACF and PACF
+
+From the differenced series:
+- PACF suggests a short non-seasonal autoregressive component (AR(1)).
+- ACF exhibits seasonal spikes at lags 12 and 24, pointing to a seasonal moving-average structure (MA(2)) after seasonal differencing.
+
+Consequently, this initial analysis suggests that a possible model for these data is an ARIMA(1,1,0)(0,1,2). We fit this model, along with some variations on it and compute the AICc values.
+
+## Model Fitting
+
+```{r message = FALSE, warning = FALSE}
+pt_fit <- pt_tour %>% 
+  model(
+    sarima110_012 = ARIMA(tourist ~ pdq(1,1,0) + PDQ(0,1,2)),
+    sarima111_012 = ARIMA(tourist ~ pdq(1,1,0) + PDQ(0,1,1)),
+    sarima111_111 = ARIMA(tourist ~ pdq(1,1,1) + PDQ(1,1,1)),
+    sarima110_112 = ARIMA(tourist ~ pdq(1,1,0) + PDQ(1,1,2)),
+    sarima110_111 = ARIMA(tourist ~ pdq(1,1,0) + PDQ(1,1,1)),
+    sarima111_112 = ARIMA(tourist ~ pdq(1,1,1) + PDQ(1,1,2))
+  )
+
+
+#checking the information criteria 
+
+glance(pt_fit) %>% arrange(AICc) %>% select(.model:BIC)
+
+```
+
+### Information Criteria Report
+
+After estimating the candidate SARIMA specifications from the ACF/PACF, we compared their information criteria. Consistent with the Box–Jenkins procedure, we use AICc as the primary selection metric and BIC as a parsimony check among models with adequate residuals. The model SARIMA(1,1,0)(1,1,2)[12] achieves the lowest AICc (1376.17) and lowest BIC (1390.07) with the highest log-likelihood (–682.85), indicating the best balance of fit and complexity among the candidates. We therefore select it as the preferred model for forecasting.
+
+
+## Diagnostic check plot for residuals
+
+From the analysis table of the estimated models, we select the model SARIMA(1,1,0)(1,1,2) according to the information criteria. Then we proceed to analyze the residuals.
+
+```{r message = FALSE, warning = FALSE, out.width="100%"}
+pt_fit %>%
+  select(sarima110_112) %>%
+  gg_tsresiduals()
+```
+
+### Diagnostics Check Report
+
+After analyzing the values of the ACF plot of the residuals, there was no significant pattern left to model; as they look random. The histogram of the residual plots also approximates a normal distribution. Following the process, there is a need to test for the presence of autocorrelation between the residuals through Ljung-Box and Box-Pierce tests.
+
+### Statistical Tests of the Residuals
+```{r}
+#Ljung-Box test:
+augment(pt_fit) %>%
+filter(.model=='sarima110_112') %>%
+features(.innov, ljung_box, lag = 36)
+```
+
+```{r message = FALSE, warning = FALSE}
+#Box-Pierce test:
+augment(pt_fit) %>%
+filter(.model=='sarima110_112') %>%
+features(.innov, box_pierce, lag = 36)
+```
+
+### Report from the Statistical Analysis test of the Residuals
+
+Following the output of the Ljung-Box and Box-Pierce residuals test, it is evident that the p-values for the tests are all greater than 5%, so we don’t reject the null hypothesis. This indicates that there is no statistical evidence of the presence of autocorrelation between the residuals. 
+
+Before finalizing our forecast, we will further explore whether an alternative forecasting method might yield a better statistical fit for the data. To do this, we will specifically examine the Exponential Smoothing State Space (ETS) model.
+
+```{r message = FALSE, warning = FALSE, out.width="100%"}
+# Fitting ETS model on the same series
+
+ets_model <- pt_tour %>%
+  model(ETS = ETS(tourist))
+
+# Extract info criteria for both SARIMA(1,1,0)(1,1,2) and ETS
+info_compare <- bind_rows(
+  glance(pt_fit %>% select(sarima110_112)),
+  glance(ets_model)
+) %>%
+  select(.model, sigma2, log_lik, AIC, AICc, BIC)
+
+info_compare
+```
+### Comparison with Alternative Forecasting Method (ETS)
+
+The 'sarima110_112' model achieved substantially lower information criteria than the ETS alternative, confirming its superior fit.
+
+This indicates that SARIMA better captures the stochastic seasonal structure and autocorrelation dynamics of the tourism data, whereas ETS models seasonality through smoother deterministic components.
+Therefore, SARIMA remains the preferred model for forecasting Portugal’s tourism series.
+
+## Tourism Series Forecast
+
+### Out-of-Sample Forecast Evaluation (2019 Test Set)
+```{r message = FALSE, warning = FALSE, out.width="100%"}
+forecast(pt_fit, h=36) %>%
+filter(.model=='sarima110_112') %>%
+autoplot(pt_tour) +
+labs(title = "Portugal's Tourism Traffic",
+y="number of tourists (x1000)")
+
+```
+
+### Validating the accuracy of the selected model
+
+After forecasting the series based on the model, it is imperative to validate the model's accuracy. We  need to test how well each model can predict data it has not seen. To do this, we split the series into a training set (all observations up to 2018) and a test set (2019 only). Each candidate model is estimated using only the training data, so it “learns” patterns such as trend, seasonality, and short-term dependence without looking at 2019. We then generate forecasts for 2019 and compare those forecasts to the actual observed values in 2019. This is called out-of-sample evaluation, and it’s more honest than just checking in-sample fit, because it tests true predictive performance. After producing the forecasts, we can both visually inspect how close the forecast lines are to the real 2019 values, and compute accuracy metrics (ME, RMSE, MAE, MPE, MAPE, MASE, RMSSE, ACF1) to quantify forecast error. The model with the lowest forecast error on the 2019 test set is the model we’ll consider most reliable for future forecasting.
+
+### In-Sample Forecast and Diagnostic Evaluation
+```{r message = FALSE, warning = FALSE, out.width="100%"}
+#Training data
+pt_train <- pt_tour %>%
+  filter(year(month) < 2019)
+#Test data
+pt_test <- pt_tour %>%
+  filter(year(month) >= 2019, year(month) <= 2019)
+#Fit models in training data
+pt_fit <- pt_train %>%
+  model(
+    sarima111_112 = ARIMA(tourist ~ pdq(1,1,1) + PDQ(1,1,2)),
+    sarima110_112 = ARIMA(tourist ~ pdq(1,1,0) + PDQ(1,1,2)),
+    sarima110_011 = ARIMA(tourist ~ pdq(1,1,0) + PDQ(0,1,1)),
+  )
+#Forecast in test data
+pt_fc <- pt_fit %>%
+  forecast(pt_test)
+#Plot results
+pt_fc %>%
+  autoplot(bind_rows(pt_train, pt_test), level = NULL) +
+  labs(y = '', title = 'Tourism') +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+```{r message = FALSE, warning = FALSE}
+#Comparing the model's accuracy
+fabletools::accuracy(pt_fc, dplyr::bind_rows(pt_train, pt_test))
+
+```
+
+### Accuracy Report and Conclusion
+
+To justify the model selection, the SARIMA(1,1,0)(1,1,2)[12] model was selected as the final forecasting model based on its strong out-of-sample performance and adherence to the Box–Jenkins principles.
+It yielded the lowest overall forecast errors (RMSE = 50.05, MAE = 41.22, MAPE = 3.06%) and produced residuals that are approximately white noise, with no significant autocorrelation (ACF₁ = 0.31).
+Following the Box–Jenkins criterion of selecting the most parsimonious and statistically adequate model, SARIMA(1,1,0)(1,1,2)[12] provides the best balance between model simplicity, goodness of fit, and forecasting accuracy for Portugal’s tourism demand series.
+For future enhancements, consider external regressors (e.g., flight arrivals, macro indicators), holiday/event effects, or regime-switching to handle structural breaks.
+
+## References:
