@@ -54,7 +54,7 @@ This model captures the strong annual seasonality in Portuguese tourism while ke
    git clone https://github.com/nwene/pt-tourism-forecast.git
    cd portugal-tourism-forecast
 
-2.  Open the R Markdown / notebook file: pt_tourism_forecast.Rmd 
+2.  Open the R Markdown / notebook file: PT_tourism.Rmd 
 3.  Install required packages (listed in requirements.txt or the R setup chunk).
 4.  Knit/run the analysis to reproduce the figures and forecasts.
 
